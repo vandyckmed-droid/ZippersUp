@@ -97,8 +97,10 @@ $("go").onclick=async()=>{const b=$("go");if(!$("key").value.trim())return sub("
 try{localStorage.setItem("fmpkey",$("key").value.trim())}catch(e){}
 b.disabled=true;try{
 sub("Fetching top 100 by market cap…");
-let list=await api("company-screener",{marketCapMoreThan:2e10,country:"US",isEtf:"false",isFund:"false",isActivelyTrading:"true",exchange:"NYSE,NASDAQ",limit:300});
-const stocks=list.filter(r=>r.marketCap).sort((x,y)=>y.marketCap-x.marketCap).slice(0,TOP_N);
+let list=await api("company-screener",{marketCapMoreThan:2e10,country:"US",isEtf:"false",isFund:"false",isActivelyTrading:"true",exchange:"NYSE,NASDAQ",limit:400});
+const seen=new Set(),stocks=list.filter(r=>r.marketCap&&/^[A-Z]{1,5}$/.test(r.symbol)&&!/series|pfd|preferred|trust|notes|depositary/i.test(r.companyName||"")
+&&["NYSE","NASDAQ"].includes(r.exchangeShortName)).sort((x,y)=>y.marketCap-x.marketCap)
+.filter(r=>!seen.has(r.companyName)&&seen.add(r.companyName)).slice(0,TOP_N); // drop preferreds/odd tickers; one line per company
 const end=new Date(),endS=iso(end),start=iso(shiftMonths(end,48)),cache=(await kv("readonly","prices"))||{};
 const series=new Array(stocks.length);let done=0,next=0;
 await Promise.all(Array.from({length:6},async()=>{while(next<stocks.length){const i=next++;

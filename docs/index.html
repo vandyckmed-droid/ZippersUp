@@ -24,6 +24,13 @@ button.sec{background:var(--line);color:var(--fg)}button:disabled{opacity:.5;cur
 <div class="bar">
 <input id="gh" type="password" placeholder="GitHub token (fine-grained, Contents: write) – for saving only" autocomplete="off">
 <button id="save" class="sec">Save to repo</button><button id="load" class="sec">Load from repo</button></div>
+<div class="bar">
+<button id="dlj" class="sec">Download JSON</button><button id="dlc" class="sec">Download CSV</button>
+<button id="cp" class="sec">Copy CSV</button><button id="ul" class="sec">Load file…</button>
+<input id="file" type="file" accept=".json" hidden></div>
+<div class="bar">
+<input id="gcid" placeholder="Google OAuth client ID (for Drive)" autocomplete="off">
+<button id="gsave" class="sec">Save to Drive</button><button id="gload" class="sec">Load from Drive</button></div>
 <div class="sub" id="sub">Enter your FMP key and click Refresh data.</div>
 <input id="q" style="margin-top:4px" placeholder="Filter by ticker, name or sector">
 <div class="wrap"><table><thead><tr>
@@ -51,7 +58,7 @@ dir=k===key?-dir:(k==="symbol"||k==="name"||k==="sector"||k==="rank"?1:-1);key=k
 document.getElementById("q").oninput=render;
 const BASE="https://financialmodelingprep.com/stable",TOP_N=100;
 const $=id=>document.getElementById(id),sub=t=>$("sub").textContent=t;
-try{$("key").value=localStorage.getItem("fmpkey")||"";$("gh").value=localStorage.getItem("ghtoken")||""}catch(e){}
+try{$("key").value=localStorage.getItem("fmpkey")||"";$("gh").value=localStorage.getItem("ghtoken")||"";$("gcid").value=localStorage.getItem("gcid")||""}catch(e){}
 const REPO="vandyckmed-droid/ZippersUp",BRANCH="main",STORE="docs/data/store.json";
 // ---- IndexedDB cache: store "prices" {symbol -> [[date,px],...]}, store "meta"
 const db=new Promise((res,rej)=>{const r=indexedDB.open("zu",1);
@@ -117,5 +124,37 @@ sub("Saving to repo…");
 const put=await fetch(url,{method:"PUT",headers:h,body:JSON.stringify({message:"Update saved data "+result.asOf,content:btoa(bin),branch:BRANCH,sha})});
 if(!put.ok)throw new Error("GitHub "+put.status+" "+((await put.json()).message||""));
 sub("Saved to repo (site redeploys in ~1 min).")}catch(e){sub("Save failed: "+e.message)}};
+// ---- local export / import
+const getStore=async()=>{const result=await kv("readonly","result");if(!result)throw new Error("nothing to save – click Refresh data first");
+return{prices:await kv("readonly","prices"),result}};
+const applyStore=async j=>{await kv("readwrite","prices",j.prices);await kv("readwrite","result",j.result);show(j.result)};
+const csv=r=>"rank,symbol,name,sector,marketCap,log_ret_12_1,pct\n"+r.stocks.map(s=>[s.rank??"",s.symbol,'"'+(s.name||"").replace(/"/g,'""')+'"',
+'"'+(s.sector||"")+'"',s.marketCap,s.mom??"",s.mom==null?"":((Math.exp(s.mom)-1)*100).toFixed(2)].join(",")).join("\n");
+function download(name,text,type){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();URL.revokeObjectURL(a.href)}
+const guard=f=>async()=>{try{await f()}catch(e){sub("Error: "+e.message)}};
+$("dlj").onclick=guard(async()=>{const j=await getStore();download(`zippersup-${j.result.asOf}.json`,JSON.stringify(j),"application/json");sub("Downloaded JSON.")});
+$("dlc").onclick=guard(async()=>{const j=await getStore();download(`zippersup-${j.result.asOf}.csv`,csv(j.result),"text/csv");sub("Downloaded CSV.")});
+$("cp").onclick=guard(async()=>{await navigator.clipboard.writeText(csv((await getStore()).result));sub("Copied CSV to clipboard.")});
+$("ul").onclick=()=>$("file").click();
+$("file").onchange=guard(async()=>{const f=$("file").files[0];if(!f)return;const j=JSON.parse(await f.text());
+if(!j.prices||!j.result)throw new Error("not a ZippersUp JSON file");await applyStore(j);$("file").value=""});
+// ---- Google Drive (drive.file scope: the app only sees files it created)
+const DRIVE_FILE="zippersup-store.json";let gtok=null,gexp=0;
+function gToken(){const cid=$("gcid").value.trim();if(!cid)throw new Error("enter a Google OAuth client ID");
+try{localStorage.setItem("gcid",cid)}catch(e){}
+if(gtok&&Date.now()<gexp)return Promise.resolve(gtok);
+return new Promise((res,rej)=>{const go=()=>google.accounts.oauth2.initTokenClient({client_id:cid,scope:"https://www.googleapis.com/auth/drive.file",
+callback:r=>r.error?rej(new Error(r.error)):(gtok=r.access_token,gexp=Date.now()+(r.expires_in-60)*1e3,res(gtok))}).requestAccessToken();
+if(window.google&&google.accounts)return go();const sc=document.createElement("script");sc.src="https://accounts.google.com/gsi/client";sc.onload=go;
+sc.onerror=()=>rej(new Error("could not load Google sign-in"));document.head.appendChild(sc)})}
+async function driveFind(t){const r=await fetch("https://www.googleapis.com/drive/v3/files?q="+encodeURIComponent(`name='${DRIVE_FILE}' and trashed=false`)+"&fields=files(id)",{headers:{Authorization:"Bearer "+t}});
+if(!r.ok)throw new Error("Drive "+r.status);return(await r.json()).files[0]?.id}
+$("gsave").onclick=guard(async()=>{const j=await getStore(),t=await gToken();sub("Saving to Drive…");const id=await driveFind(t),h={Authorization:"Bearer "+t};let r;
+if(id)r=await fetch(`https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=media`,{method:"PATCH",headers:{...h,"Content-Type":"application/json"},body:JSON.stringify(j)});
+else{const b="zu"+Date.now(),body=`--${b}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify({name:DRIVE_FILE})}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(j)}\r\n--${b}--`;
+r=await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",{method:"POST",headers:{...h,"Content-Type":"multipart/related; boundary="+b},body})}
+if(!r.ok)throw new Error("Drive "+r.status);sub("Saved to Google Drive as "+DRIVE_FILE+".")});
+$("gload").onclick=guard(async()=>{const t=await gToken(),id=await driveFind(t);if(!id)throw new Error("no "+DRIVE_FILE+" in Drive yet");
+const r=await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`,{headers:{Authorization:"Bearer "+t}});if(!r.ok)throw new Error("Drive "+r.status);await applyStore(await r.json())});
 kv("readonly","result").then(d=>d?show(d):loadRepo()).catch(()=>{});
 </script></main></body></html>

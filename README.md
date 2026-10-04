@@ -9,3 +9,7 @@ Settings → Pages → Source: *GitHub Actions*. `.github/workflows/pages.yml` p
 
 ## Saving data to the repo
 Paste a fine-grained GitHub token (Contents: read/write on this repo) and click **Save to repo**. This commits the cached prices + ranking to `docs/data/store.json` on `main`, which Pages serves. Any browser with an empty cache auto-loads it (or use **Load from repo**). The repo is public, so saved data is public.
+
+## Other save options
+- **Download JSON / CSV, Copy CSV, Load file…** work with no setup.
+- **Google Drive:** create an OAuth *Web* client ID (Google Cloud Console → APIs & Services → Credentials; enable the Drive API; add `https://vandyckmed-droid.github.io` as an authorized JavaScript origin), paste it into the page, then use **Save to Drive** / **Load from Drive**. Uses the `drive.file` scope, so the page only sees the file it created.

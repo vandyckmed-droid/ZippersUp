@@ -21,6 +21,9 @@ button.sec{background:var(--line);color:var(--fg)}button:disabled{opacity:.5;cur
 <div class="bar">
 <input id="key" type="password" placeholder="FMP API key (stored only in this browser)" autocomplete="off">
 <button id="go">Refresh data</button><button id="clr" class="sec">Clear cache</button></div>
+<div class="bar">
+<input id="gh" type="password" placeholder="GitHub token (fine-grained, Contents: write) – for saving only" autocomplete="off">
+<button id="save" class="sec">Save to repo</button><button id="load" class="sec">Load from repo</button></div>
 <div class="sub" id="sub">Enter your FMP key and click Refresh data.</div>
 <input id="q" style="margin-top:4px" placeholder="Filter by ticker, name or sector">
 <div class="wrap"><table><thead><tr>
@@ -48,7 +51,8 @@ dir=k===key?-dir:(k==="symbol"||k==="name"||k==="sector"||k==="rank"?1:-1);key=k
 document.getElementById("q").oninput=render;
 const BASE="https://financialmodelingprep.com/stable",TOP_N=100;
 const $=id=>document.getElementById(id),sub=t=>$("sub").textContent=t;
-try{$("key").value=localStorage.getItem("fmpkey")||""}catch(e){}
+try{$("key").value=localStorage.getItem("fmpkey")||"";$("gh").value=localStorage.getItem("ghtoken")||""}catch(e){}
+const REPO="vandyckmed-droid/ZippersUp",BRANCH="main",STORE="docs/data/store.json";
 // ---- IndexedDB cache: store "prices" {symbol -> [[date,px],...]}, store "meta"
 const db=new Promise((res,rej)=>{const r=indexedDB.open("zu",1);
 r.onupgradeneeded=()=>{r.result.createObjectStore("kv")};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
@@ -96,5 +100,22 @@ const nc={};stocks.forEach((s,i)=>nc[s.symbol]=series[i].filter(x=>x[0]>=start))
 await kv("readwrite","prices",nc);const d=build(stocks,series);d.fetched=new Date().toISOString();
 await kv("readwrite","result",d);show(d)}catch(e){sub("Error: "+e.message)}b.disabled=false};
 $("clr").onclick=async()=>{await kv("readwrite","prices",{});await kv("readwrite","result",null);rows=[];render();sub("Cache cleared.")};
-kv("readonly","result").then(d=>d&&show(d)).catch(()=>{});
+// ---- save/load the cache + ranking as a JSON file in the repo (served by Pages at data/store.json)
+async function loadRepo(){const r=await fetch("data/store.json?t="+Date.now());if(!r.ok)throw new Error("no saved data in repo yet");
+const j=await r.json();await kv("readwrite","prices",j.prices);await kv("readwrite","result",j.result);show(j.result)}
+$("load").onclick=()=>loadRepo().catch(e=>sub("Load failed: "+e.message));
+$("save").onclick=async()=>{const tok=$("gh").value.trim();if(!tok)return sub("Enter a GitHub token first.");
+try{localStorage.setItem("ghtoken",tok)}catch(e){}
+try{const prices=await kv("readonly","prices"),result=await kv("readonly","result");
+if(!result)return sub("Nothing to save – click Refresh data first.");
+const bytes=new TextEncoder().encode(JSON.stringify({prices,result}));let bin="";
+for(let i=0;i<bytes.length;i+=8192)bin+=String.fromCharCode(...bytes.subarray(i,i+8192));
+const url=`https://api.github.com/repos/${REPO}/contents/${STORE}`,h={Authorization:"Bearer "+tok,Accept:"application/vnd.github+json"};
+const cur=await fetch(url+"?ref="+BRANCH,{headers:h});let sha;
+if(cur.ok)sha=(await cur.json()).sha;else if(cur.status!==404)throw new Error("GitHub "+cur.status);
+sub("Saving to repo…");
+const put=await fetch(url,{method:"PUT",headers:h,body:JSON.stringify({message:"Update saved data "+result.asOf,content:btoa(bin),branch:BRANCH,sha})});
+if(!put.ok)throw new Error("GitHub "+put.status+" "+((await put.json()).message||""));
+sub("Saved to repo (site redeploys in ~1 min).")}catch(e){sub("Save failed: "+e.message)}};
+kv("readonly","result").then(d=>d?show(d):loadRepo()).catch(()=>{});
 </script></main></body></html>

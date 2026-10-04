@@ -6,3 +6,6 @@ Open the page, paste your FMP API key (kept in this browser's localStorage only)
 
 ## Hosting
 Settings → Pages → Source: *GitHub Actions*. `.github/workflows/pages.yml` publishes `docs/` on each push to `main` (no secrets, no data fetching).
+
+## Saving data to the repo
+Paste a fine-grained GitHub token (Contents: read/write on this repo) and click **Save to repo**. This commits the cached prices + ranking to `docs/data/store.json` on `main`, which Pages serves. Any browser with an empty cache auto-loads it (or use **Load from repo**). The repo is public, so saved data is public.

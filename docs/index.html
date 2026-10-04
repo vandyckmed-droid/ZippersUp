@@ -12,17 +12,23 @@ input{width:100%;box-sizing:border-box;padding:8px;margin-bottom:8px;border:1px 
 th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
 th{cursor:pointer;color:var(--mut);font-weight:600;user-select:none}
 th:nth-child(2),td:nth-child(2),th:nth-child(3),td:nth-child(3){text-align:left}
+.bar{display:flex;gap:8px;margin-bottom:8px}.bar input{margin:0;flex:1}
+button{padding:8px 12px;border:0;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer;white-space:nowrap}
+button.sec{background:var(--line);color:var(--fg)}button:disabled{opacity:.5;cursor:default}
 .up{color:var(--up)}.dn{color:var(--dn)}svg{vertical-align:middle}
 </style></head><body><main>
 <h1>12-1 Momentum Rank</h1>
-<div class="sub" id="sub">Loading…</div>
-<input id="q" placeholder="Filter by ticker, name or sector">
+<div class="bar">
+<input id="key" type="password" placeholder="FMP API key (stored only in this browser)" autocomplete="off">
+<button id="go">Refresh data</button><button id="clr" class="sec">Clear cache</button></div>
+<div class="sub" id="sub">Enter your FMP key and click Refresh data.</div>
+<input id="q" style="margin-top:4px" placeholder="Filter by ticker, name or sector">
 <div class="wrap"><table><thead><tr>
 <th data-k="rank">#</th><th data-k="symbol">Ticker</th><th data-k="name">Name</th>
 <th data-k="sector">Sector</th><th data-k="marketCap">Mkt cap ($B)</th>
 <th data-k="mom">12-1 log ret</th><th data-k="mom">≈ %</th><th>4y</th>
 </tr></thead><tbody id="b"></tbody></table></div>
-<p class="sub">12-1 momentum = ln(P<sub>t−1m</sub> / P<sub>t−12m</sub>) using dividend-adjusted EOD closes, skipping the most recent month. Top 100 US stocks by market cap. Data: Financial Modeling Prep, refreshed each weekday.</p>
+<p class="sub">12-1 momentum = ln(P<sub>t−1m</sub> / P<sub>t−12m</sub>) using dividend-adjusted EOD closes, skipping the most recent month. Top 100 US stocks by market cap. Data: Financial Modeling Prep, fetched from your browser on demand and cached in IndexedDB (later refreshes only fetch new days).</p>
 <script>
 let rows=[],key="rank",dir=1;
 const f=(x,d=3)=>x==null?"–":x.toFixed(d);
@@ -40,7 +46,55 @@ return `<tr><td>${s.rank??"–"}</td><td><b>${s.symbol}</b></td><td>${s.name||""
 document.querySelectorAll("th[data-k]").forEach(th=>th.onclick=()=>{const k=th.dataset.k;
 dir=k===key?-dir:(k==="symbol"||k==="name"||k==="sector"||k==="rank"?1:-1);key=k;render()});
 document.getElementById("q").oninput=render;
-fetch("data.json").then(r=>r.json()).then(d=>{rows=d.stocks;
-document.getElementById("sub").textContent=`As of ${d.asOf} · window ${d.from12} → ${d.to1} · ${rows.filter(s=>s.mom!=null).length} ranked`;render()})
-.catch(e=>document.getElementById("sub").textContent="Failed to load data.json: "+e);
+const BASE="https://financialmodelingprep.com/stable",TOP_N=100;
+const $=id=>document.getElementById(id),sub=t=>$("sub").textContent=t;
+try{$("key").value=localStorage.getItem("fmpkey")||""}catch(e){}
+// ---- IndexedDB cache: store "prices" {symbol -> [[date,px],...]}, store "meta"
+const db=new Promise((res,rej)=>{const r=indexedDB.open("zu",1);
+r.onupgradeneeded=()=>{r.result.createObjectStore("kv")};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+const kv=async(m,k,v)=>{const d=await db;return new Promise((res,rej)=>{
+const st=d.transaction("kv",m).objectStore("kv"),q=m==="readonly"?st.get(k):st.put(v,k);
+q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)})};
+// ---- FMP
+async function api(path,params){const u=new URL(BASE+"/"+path);
+Object.entries({...params,apikey:$("key").value.trim()}).forEach(([k,v])=>u.searchParams.set(k,v));
+for(let a=0;a<5;a++){const r=await fetch(u);if(r.status===429){await new Promise(z=>setTimeout(z,1000*2**a));continue}
+if(!r.ok)throw new Error(`FMP ${r.status} on ${path}`);const j=await r.json();
+if(j&&j["Error Message"])throw new Error(j["Error Message"]);return j}throw new Error("rate limited")}
+const px=async(sym,from,to)=>{const o={};(await api("historical-price-eod/dividend-adjusted",{symbol:sym,from,to}))
+.forEach(r=>{const p=r.adjClose||r.close;if(p>0)o[r.date]=p});return Object.entries(o).sort()};
+const iso=d=>d.toISOString().slice(0,10);
+function shiftMonths(d,m){const t=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()-m,1));
+const last=new Date(Date.UTC(t.getUTCFullYear(),t.getUTCMonth()+1,0)).getUTCDate();
+t.setUTCDate(Math.min(d.getUTCDate(),last));return t}
+async function cached(sym,start,end,cache){const old=cache[sym];
+if(old&&old.length&&old[0][0]<=start){const last=new Date(old[old.length-1][0]+"T00:00Z");
+const nw=await px(sym,iso(new Date(last-10*864e5)),end),have=Object.fromEntries(old);
+if(!nw.some(([d,p])=>have[d]&&Math.abs(p/have[d]-1)>1e-3)){nw.forEach(([d,p])=>have[d]=p);return Object.entries(have).sort()}}
+return px(sym,start,end)}
+const onOrBefore=(s,d)=>{let b=null;for(const x of s){if(x[0]<=d)b=x;else break}return b};
+function build(stocks,series,cutoff){const asOf=series.reduce((m,s)=>s.length&&s[s.length-1][0]>m?s[s.length-1][0]:m,"");
+const a=new Date(asOf+"T00:00Z"),t1=iso(shiftMonths(a,1)),t12=iso(shiftMonths(a,12));
+const slack=iso(new Date(new Date(t12+"T00:00Z").getTime()+5*864e5));const out=[];
+stocks.forEach((st,i)=>{const s=series[i];if(!s.length)return;const p12=onOrBefore(s,t12),p1=onOrBefore(s,t1);
+out.push({symbol:st.symbol,name:st.companyName,sector:st.sector,marketCap:st.marketCap,
+mom:p12&&p1&&s[0][0]<=slack?Math.log(p1[1]/p12[1]):null,spark:s.filter((_,k)=>k%5===0).map(x=>+x[1].toFixed(2))})});
+const r=out.filter(o=>o.mom!=null).sort((x,y)=>y.mom-x.mom);r.forEach((o,i)=>o.rank=i+1);
+return{asOf,from12:t12,to1:t1,stocks:r.concat(out.filter(o=>o.mom==null))}}
+function show(d){rows=d.stocks;sub(`As of ${d.asOf} · window ${d.from12} → ${d.to1} · ${rows.filter(s=>s.mom!=null).length} ranked · fetched ${d.fetched?.slice(0,16).replace("T"," ")||""}`);render()}
+$("go").onclick=async()=>{const b=$("go");if(!$("key").value.trim())return sub("Enter an FMP API key first.");
+try{localStorage.setItem("fmpkey",$("key").value.trim())}catch(e){}
+b.disabled=true;try{
+sub("Fetching top 100 by market cap…");
+let list=await api("company-screener",{marketCapMoreThan:2e10,country:"US",isEtf:"false",isFund:"false",isActivelyTrading:"true",exchange:"NYSE,NASDAQ",limit:300});
+const stocks=list.filter(r=>r.marketCap).sort((x,y)=>y.marketCap-x.marketCap).slice(0,TOP_N);
+const end=new Date(),endS=iso(end),start=iso(shiftMonths(end,48)),cache=(await kv("readonly","prices"))||{};
+const series=new Array(stocks.length);let done=0,next=0;
+await Promise.all(Array.from({length:6},async()=>{while(next<stocks.length){const i=next++;
+series[i]=await cached(stocks[i].symbol,start,endS,cache);sub(`Fetching prices ${++done}/${stocks.length}…`)}}));
+const nc={};stocks.forEach((s,i)=>nc[s.symbol]=series[i].filter(x=>x[0]>=start));
+await kv("readwrite","prices",nc);const d=build(stocks,series);d.fetched=new Date().toISOString();
+await kv("readwrite","result",d);show(d)}catch(e){sub("Error: "+e.message)}b.disabled=false};
+$("clr").onclick=async()=>{await kv("readwrite","prices",{});await kv("readwrite","result",null);rows=[];render();sub("Cache cleared.")};
+kv("readonly","result").then(d=>d&&show(d)).catch(()=>{});
 </script></main></body></html>

@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 concurrency: {group: pages, cancel-in-progress: true}
@@ -19,6 +19,12 @@ jobs:
       - run: pip install requests
       - run: python scripts/fetch_data.py
         env: {FMP_API_KEY: "${{ secrets.FMP_API_KEY }}"}
+      - name: Commit price cache
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/prices.json
+          git diff --cached --quiet || (git commit -m "Update price cache [skip ci]" && git push)
       - uses: actions/upload-pages-artifact@v3
         with: {path: docs}
   deploy:

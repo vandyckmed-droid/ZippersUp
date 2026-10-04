@@ -40,6 +40,31 @@ def prices(symbol, start, end):
     return sorted(out.items())
 
 
+CACHE = "data/prices.json"
+OVERLAP_DAYS = 10   # re-fetch a short overlap to detect dividend/split restatements
+
+
+def load_cache():
+    try:
+        return json.load(open(CACHE))
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def prices_cached(symbol, start, end, cache):
+    """Incremental fetch: only new days, unless adjusted history was restated."""
+    old = cache.get(symbol)
+    if old and old[0][0] <= start:
+        since = (dt.date.fromisoformat(old[-1][0]) - dt.timedelta(days=OVERLAP_DAYS)).isoformat()
+        new = prices(symbol, since, end)
+        have = dict(old)
+        restated = any(d in have and abs(p / have[d] - 1) > 1e-3 for d, p in new)
+        if not restated:
+            have.update(dict(new))
+            return sorted(have.items())
+    return prices(symbol, start, end)   # first run, short history, or restated
+
+
 def price_on_or_before(series, date):
     best = None
     for d, p in series:
@@ -62,8 +87,15 @@ def main():
     end = dt.date.today()
     start = shift_months(end, 48)
     stocks = top_stocks()
+    cache = load_cache()
     with ThreadPoolExecutor(8) as ex:
-        series = list(ex.map(lambda s: prices(s["symbol"], start.isoformat(), end.isoformat()), stocks))
+        series = list(ex.map(
+            lambda s: prices_cached(s["symbol"], start.isoformat(), end.isoformat(), cache), stocks))
+    # keep only current constituents, trimmed to the 4y window
+    new_cache = {st["symbol"]: [[d, p] for d, p in sr if d >= start.isoformat()]
+                 for st, sr in zip(stocks, series) if sr}
+    os.makedirs("data", exist_ok=True)
+    json.dump(new_cache, open(CACHE, "w"), separators=(",", ":"))
 
     asof = max(s[-1][0] for s in series if s)
     asof_d = dt.date.fromisoformat(asof)

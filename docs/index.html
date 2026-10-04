@@ -25,8 +25,8 @@ button.sec{background:var(--line);color:var(--fg)}button:disabled{opacity:.5;cur
 <input id="gh" type="password" placeholder="GitHub token (fine-grained, Contents: write) – for saving only" autocomplete="off">
 <button id="save" class="sec">Save to repo</button><button id="load" class="sec">Load from repo</button></div>
 <div class="bar">
-<button id="dlj" class="sec">Download JSON</button><button id="dlc" class="sec">Download CSV</button>
-<button id="cp" class="sec">Copy CSV</button><button id="ul" class="sec">Load file…</button>
+<button id="dlj" class="sec">Download raw JSON</button><button id="dlc" class="sec">Download ranking CSV</button>
+<button id="cp" class="sec">Copy ranking CSV</button><button id="ul" class="sec">Load file…</button>
 <input id="file" type="file" accept=".json" hidden></div>
 <div class="bar">
 <input id="gcid" placeholder="Google OAuth client ID (for Drive)" autocomplete="off">
@@ -59,8 +59,8 @@ document.getElementById("q").oninput=render;
 const BASE="https://financialmodelingprep.com/stable",TOP_N=100;
 const $=id=>document.getElementById(id),sub=t=>$("sub").textContent=t;
 try{$("key").value=localStorage.getItem("fmpkey")||"";$("gh").value=localStorage.getItem("ghtoken")||"";$("gcid").value=localStorage.getItem("gcid")||""}catch(e){}
-const REPO="vandyckmed-droid/ZippersUp",BRANCH="main",STORE="docs/data/store.json";
-// ---- IndexedDB cache: store "prices" {symbol -> [[date,px],...]}, store "meta"
+const REPO="vandyckmed-droid/ZippersUp",BRANCH="main",STORE="docs/data/raw.json";
+// ---- IndexedDB: key "raw" holds the raw FMP data (universe + daily adjusted closes)
 const db=new Promise((res,rej)=>{const r=indexedDB.open("zu",1);
 r.onupgradeneeded=()=>{r.result.createObjectStore("kv")};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
 const kv=async(m,k,v)=>{const d=await db;return new Promise((res,rej)=>{
@@ -101,47 +101,48 @@ let list=await api("company-screener",{marketCapMoreThan:2e10,country:"US",isEtf
 const seen=new Set(),stocks=list.filter(r=>r.marketCap&&/^[A-Z]{1,5}$/.test(r.symbol)&&!/series|pfd|preferred|trust|notes|depositary/i.test(r.companyName||"")
 &&["NYSE","NASDAQ"].includes(r.exchangeShortName)).sort((x,y)=>y.marketCap-x.marketCap)
 .filter(r=>!seen.has(r.companyName)&&seen.add(r.companyName)).slice(0,TOP_N); // drop preferreds/odd tickers; one line per company
-const end=new Date(),endS=iso(end),start=iso(shiftMonths(end,48)),cache=(await kv("readonly","prices"))||{};
+const end=new Date(),endS=iso(end),start=iso(shiftMonths(end,48)),cache=((await kv("readonly","raw"))||{}).prices||{};
 const series=new Array(stocks.length);let done=0,next=0;
 await Promise.all(Array.from({length:6},async()=>{while(next<stocks.length){const i=next++;
 series[i]=await cached(stocks[i].symbol,start,endS,cache);sub(`Fetching prices ${++done}/${stocks.length}…`)}}));
 const nc={};stocks.forEach((s,i)=>nc[s.symbol]=series[i].filter(x=>x[0]>=start));
-await kv("readwrite","prices",nc);const d=build(stocks,series);d.fetched=new Date().toISOString();
-await kv("readwrite","result",d);show(d)}catch(e){sub("Error: "+e.message)}b.disabled=false};
-$("clr").onclick=async()=>{await kv("readwrite","prices",{});await kv("readwrite","result",null);rows=[];render();sub("Cache cleared.")};
-// ---- save/load the cache + ranking as a JSON file in the repo (served by Pages at data/store.json)
-async function loadRepo(){const r=await fetch("data/store.json?t="+Date.now());if(!r.ok)throw new Error("no saved data in repo yet");
-const j=await r.json();await kv("readwrite","prices",j.prices);await kv("readwrite","result",j.result);show(j.result)}
+const raw={version:2,fetched:new Date().toISOString(),universe:stocks.map(({symbol,companyName,sector,marketCap,exchangeShortName})=>({symbol,companyName,sector,marketCap,exchangeShortName})),prices:nc};
+await kv("readwrite","raw",raw);showRaw(raw)}catch(e){sub("Error: "+e.message)}b.disabled=false};
+$("clr").onclick=async()=>{await kv("readwrite","raw",null);rows=[];render();sub("Cache cleared.")};
+// ---- save/load the cache + ranking as a JSON file in the repo (served by Pages at data/raw.json)
+async function loadRepo(){const r=await fetch("data/raw.json?t="+Date.now());if(!r.ok)throw new Error("no saved data in repo yet");
+await applyStore(await r.json())}
 $("load").onclick=()=>loadRepo().catch(e=>sub("Load failed: "+e.message));
 $("save").onclick=async()=>{const tok=$("gh").value.trim();if(!tok)return sub("Enter a GitHub token first.");
 try{localStorage.setItem("ghtoken",tok)}catch(e){}
-try{const prices=await kv("readonly","prices"),result=await kv("readonly","result");
-if(!result)return sub("Nothing to save – click Refresh data first.");
-const bytes=new TextEncoder().encode(JSON.stringify({prices,result}));let bin="";
+try{const raw=await getStore();
+const bytes=new TextEncoder().encode(JSON.stringify(raw));let bin="";
 for(let i=0;i<bytes.length;i+=8192)bin+=String.fromCharCode(...bytes.subarray(i,i+8192));
 const url=`https://api.github.com/repos/${REPO}/contents/${STORE}`,h={Authorization:"Bearer "+tok,Accept:"application/vnd.github+json"};
 const cur=await fetch(url+"?ref="+BRANCH,{headers:h});let sha;
 if(cur.ok)sha=(await cur.json()).sha;else if(cur.status!==404)throw new Error("GitHub "+cur.status);
 sub("Saving to repo…");
-const put=await fetch(url,{method:"PUT",headers:h,body:JSON.stringify({message:"Update saved data "+result.asOf,content:btoa(bin),branch:BRANCH,sha})});
+const put=await fetch(url,{method:"PUT",headers:h,body:JSON.stringify({message:"Update raw FMP data "+raw.fetched.slice(0,10),content:btoa(bin),branch:BRANCH,sha})});
 if(!put.ok)throw new Error("GitHub "+put.status+" "+((await put.json()).message||""));
 sub("Saved to repo (site redeploys in ~1 min).")}catch(e){sub("Save failed: "+e.message)}};
 // ---- local export / import
-const getStore=async()=>{const result=await kv("readonly","result");if(!result)throw new Error("nothing to save – click Refresh data first");
-return{prices:await kv("readonly","prices"),result}};
-const applyStore=async j=>{await kv("readwrite","prices",j.prices);await kv("readwrite","result",j.result);show(j.result)};
+// Raw store = {version:2, fetched, universe[], prices{sym:[[date,adjClose]]}}. Rankings are always computed in the browser from it.
+const rankOf=raw=>{const d=build(raw.universe,raw.universe.map(u=>raw.prices[u.symbol]||[]));d.fetched=raw.fetched;return d};
+const showRaw=raw=>show(rankOf(raw));
+const getStore=async()=>{const raw=await kv("readonly","raw");if(!raw)throw new Error("no raw data – click Refresh data first");return raw};
+const applyStore=async j=>{if(j.version!==2||!j.prices||!j.universe)throw new Error("not a ZippersUp raw-data file");await kv("readwrite","raw",j);showRaw(j)};
 const csv=r=>"rank,symbol,name,sector,marketCap,log_ret_12_1,pct\n"+r.stocks.map(s=>[s.rank??"",s.symbol,'"'+(s.name||"").replace(/"/g,'""')+'"',
 '"'+(s.sector||"")+'"',s.marketCap,s.mom??"",s.mom==null?"":((Math.exp(s.mom)-1)*100).toFixed(2)].join(",")).join("\n");
 function download(name,text,type){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();URL.revokeObjectURL(a.href)}
 const guard=f=>async()=>{try{await f()}catch(e){sub("Error: "+e.message)}};
-$("dlj").onclick=guard(async()=>{const j=await getStore();download(`zippersup-${j.result.asOf}.json`,JSON.stringify(j),"application/json");sub("Downloaded JSON.")});
-$("dlc").onclick=guard(async()=>{const j=await getStore();download(`zippersup-${j.result.asOf}.csv`,csv(j.result),"text/csv");sub("Downloaded CSV.")});
-$("cp").onclick=guard(async()=>{await navigator.clipboard.writeText(csv((await getStore()).result));sub("Copied CSV to clipboard.")});
+$("dlj").onclick=guard(async()=>{const j=await getStore();download(`zippersup-raw-${j.fetched.slice(0,10)}.json`,JSON.stringify(j),"application/json");sub("Downloaded JSON.")});
+$("dlc").onclick=guard(async()=>{const j=await getStore();download(`zippersup-ranking-${j.fetched.slice(0,10)}.csv`,csv(rankOf(j)),"text/csv");sub("Downloaded CSV.")});
+$("cp").onclick=guard(async()=>{await navigator.clipboard.writeText(csv(rankOf(await getStore())));sub("Copied CSV to clipboard.")});
 $("ul").onclick=()=>$("file").click();
 $("file").onchange=guard(async()=>{const f=$("file").files[0];if(!f)return;const j=JSON.parse(await f.text());
-if(!j.prices||!j.result)throw new Error("not a ZippersUp JSON file");await applyStore(j);$("file").value=""});
+await applyStore(j);$("file").value=""});
 // ---- Google Drive (drive.file scope: the app only sees files it created)
-const DRIVE_FILE="zippersup-store.json";let gtok=null,gexp=0;
+const DRIVE_FILE="zippersup-raw.json";let gtok=null,gexp=0;
 function gToken(){const cid=$("gcid").value.trim();if(!cid)throw new Error("enter a Google OAuth client ID");
 try{localStorage.setItem("gcid",cid)}catch(e){}
 if(gtok&&Date.now()<gexp)return Promise.resolve(gtok);
@@ -158,5 +159,5 @@ r=await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multi
 if(!r.ok)throw new Error("Drive "+r.status);sub("Saved to Google Drive as "+DRIVE_FILE+".")});
 $("gload").onclick=guard(async()=>{const t=await gToken(),id=await driveFind(t);if(!id)throw new Error("no "+DRIVE_FILE+" in Drive yet");
 const r=await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`,{headers:{Authorization:"Bearer "+t}});if(!r.ok)throw new Error("Drive "+r.status);await applyStore(await r.json())});
-kv("readonly","result").then(d=>d?show(d):loadRepo()).catch(()=>{});
+kv("readonly","raw").then(d=>d?showRaw(d):loadRepo()).catch(()=>{});
 </script></main></body></html>

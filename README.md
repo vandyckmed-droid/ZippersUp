@@ -5,4 +5,4 @@ Fully static, browser-only site: ranks the top 100 US stocks (by market cap) on 
 Open the page, paste your FMP API key (kept in this browser's localStorage only), click **Refresh data**. Prices are cached in IndexedDB; later refreshes fetch only new days (and re-fetch a stock if its adjusted history was restated).
 
 ## Hosting
-Settings → Pages → Source: *Deploy from a branch* → `main` / `/docs`.
+Settings → Pages → Source: *GitHub Actions*. `.github/workflows/pages.yml` publishes `docs/` on each push to `main` (no secrets, no data fetching).

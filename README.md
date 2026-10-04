@@ -1,17 +1,20 @@
 # ZippersUp – 12-1 Momentum Rank
 
-Fully static, browser-only site: ranks the top 100 US stocks (by market cap) on 12-1 log return using 4 years of dividend-adjusted EOD prices from [FMP](https://site.financialmodelingprep.com/).
+Static, browser-only page (GitHub Pages, `docs/`). Fetches raw data from FMP, stores it as organized CSV files in a **separate private repo**, and ranks the top 100 US stocks by 12-1 log return in the browser. The ranking is never stored.
 
-Open the page, paste your FMP API key (kept in this browser's localStorage only), click **Refresh data**. Prices are cached in IndexedDB; later refreshes fetch only new days (and re-fetch a stock if its adjusted history was restated).
+## One-time setup
+1. Create a **private** repo (default name `vandyckmed-droid/zippersup-data`) with an initial commit on `main` (e.g. add a README).
+2. Create a fine-grained GitHub token limited to that repo with **Contents: read and write**.
+3. Pages: Settings → Pages → Source: GitHub Actions (`.github/workflows/pages.yml` deploys `docs/`).
+4. Open the site, paste your FMP key + GitHub token (kept in your browser only), click **Refresh from FMP**.
 
-## Hosting
-Settings → Pages → Source: *GitHub Actions*. `.github/workflows/pages.yml` publishes `docs/` on each push to `main` (no secrets, no data fetching).
+## Data layout (in the data repo)
+```
+manifest.json              # datasets, columns, first/last date + row count per symbol
+fmp/universe.csv           # symbol,companyName,sector,marketCap,exchange,fetched
+fmp/eod-adjusted/AAPL.csv  # date,adjClose  (dividend-adjusted, full history kept)
+```
+New datasets get their own folder under `fmp/` and an entry in `manifest.json`.
 
-## Raw data storage
-The only thing stored is the **raw FMP data**: `{version:2, fetched, universe[], prices{symbol:[[date,adjClose],…]}}`. The ranking is never stored; the browser recomputes it from the raw data on every load.
-
-- **Browser:** IndexedDB (automatic).
-- **Download raw JSON / Load file…:** no setup.
-- **Save to Drive / Load from Drive:** `zippersup-raw.json`. Needs a Google OAuth *Web* client ID (Cloud Console → enable Drive API → add `https://vandyckmed-droid.github.io` as an authorized JavaScript origin). Uses the `drive.file` scope.
-- **Save to repo / Load from repo:** fine-grained GitHub token (Contents: write) commits `docs/data/raw.json` to `main` (public repo, so the data is public).
-- **Download/Copy ranking CSV** exports a computed ranking, for convenience only.
+## How refresh works
+Reads existing data from the repo (if the browser cache is empty), fetches only new days from FMP (re-fetching a symbol in full if its adjusted history was restated), and commits all changes in one commit. Clearing the browser cache loses nothing; **Load from repo** rebuilds it.

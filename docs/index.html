@@ -18,146 +18,137 @@ button.sec{background:var(--line);color:var(--fg)}button:disabled{opacity:.5;cur
 .up{color:var(--up)}.dn{color:var(--dn)}svg{vertical-align:middle}
 </style></head><body><main>
 <h1>12-1 Momentum Rank</h1>
-<div class="bar">
-<input id="key" type="password" placeholder="FMP API key (stored only in this browser)" autocomplete="off">
-<button id="go">Refresh data</button><button id="clr" class="sec">Clear cache</button></div>
-<div class="bar">
-<input id="gh" type="password" placeholder="GitHub token (fine-grained, Contents: write) – for saving only" autocomplete="off">
-<button id="save" class="sec">Save to repo</button><button id="load" class="sec">Load from repo</button></div>
-<div class="bar">
-<button id="dlj" class="sec">Download raw JSON</button><button id="dlc" class="sec">Download ranking CSV</button>
-<button id="cp" class="sec">Copy ranking CSV</button><button id="ul" class="sec">Load file…</button>
-<input id="file" type="file" accept=".json" hidden></div>
-<div class="bar">
-<input id="gcid" placeholder="Google OAuth client ID (for Drive)" autocomplete="off">
-<button id="gsave" class="sec">Save to Drive</button><button id="gload" class="sec">Load from Drive</button></div>
-<div class="sub" id="sub">Enter your FMP key and click Refresh data.</div>
-<input id="q" style="margin-top:4px" placeholder="Filter by ticker, name or sector">
+<div class="bar"><input id="key" type="password" placeholder="FMP API key" autocomplete="off">
+<input id="gh" type="password" placeholder="GitHub token (Contents: read/write on the data repo)" autocomplete="off"></div>
+<div class="bar"><input id="repo" placeholder="owner/data-repo" value="vandyckmed-droid/zippersup-data">
+<button id="go">Refresh from FMP</button><button id="load" class="sec">Load from repo</button><button id="clr" class="sec">Clear browser cache</button></div>
+<div class="sub" id="sub">Enter keys, then Refresh. Data is stored as CSV files in your private data repo; only new days are fetched.</div>
+<input id="q" placeholder="Filter by ticker, name or sector">
 <div class="wrap"><table><thead><tr>
 <th data-k="rank">#</th><th data-k="symbol">Ticker</th><th data-k="name">Name</th>
 <th data-k="sector">Sector</th><th data-k="marketCap">Mkt cap ($B)</th>
 <th data-k="mom">12-1 log ret</th><th data-k="mom">≈ %</th><th>4y</th>
 </tr></thead><tbody id="b"></tbody></table></div>
-<p class="sub">12-1 momentum = ln(P<sub>t−1m</sub> / P<sub>t−12m</sub>) using dividend-adjusted EOD closes, skipping the most recent month. Top 100 US stocks by market cap. Data: Financial Modeling Prep, fetched from your browser on demand and cached in IndexedDB (later refreshes only fetch new days).</p>
+<p class="sub">12-1 momentum = ln(P<sub>t−1m</sub> / P<sub>t−12m</sub>) on dividend-adjusted EOD closes, skipping the most recent month. Raw data lives in the data repo: <code>fmp/universe.csv</code>, <code>fmp/eod-adjusted/SYMBOL.csv</code>, <code>manifest.json</code>. Rankings are computed here, never stored.</p>
 <script>
 let rows=[],key="rank",dir=1;
-const f=(x,d=3)=>x==null?"–":x.toFixed(d);
+const $=id=>document.getElementById(id),sub=t=>$("sub").textContent=t,f=(x,d=3)=>x==null?"–":x.toFixed(d);
+const BASE="https://financialmodelingprep.com/stable",TOP_N=100,BRANCH="main",EOD="fmp/eod-adjusted";
+try{for(const[k,i]of[["fmpkey","key"],["ghtoken","gh"],["datarepo","repo"]]){const v=localStorage.getItem(k);if(v)$(i).value=v}}catch(e){}
+const save=()=>{try{localStorage.setItem("fmpkey",$("key").value.trim());localStorage.setItem("ghtoken",$("gh").value.trim());localStorage.setItem("datarepo",$("repo").value.trim())}catch(e){}};
 function spark(a){const w=90,h=22,mn=Math.min(...a),mx=Math.max(...a);
 const pts=a.map((v,i)=>(i/(a.length-1)*w).toFixed(1)+","+(h-(v-mn)/(mx-mn||1)*h).toFixed(1)).join(" ");
 const c=a[a.length-1]>=a[0]?"var(--up)":"var(--dn)";
 return `<svg width="${w}" height="${h}"><polyline points="${pts}" fill="none" stroke="${c}" stroke-width="1.5"/></svg>`}
-function render(){const q=document.getElementById("q").value.toLowerCase();
+function render(){const q=$("q").value.toLowerCase();
 const r=rows.filter(s=>(s.symbol+s.name+(s.sector||"")).toLowerCase().includes(q))
-.sort((a,b)=>{const x=a[key]??-1e18,y=b[key]??-1e18;return (x>y?1:x<y?-1:0)*dir});
-document.getElementById("b").innerHTML=r.map(s=>{const c=s.mom==null?"":s.mom>=0?"up":"dn";
+.sort((a,b)=>{const x=a[key]??-1e18,y=b[key]??-1e18;return(x>y?1:x<y?-1:0)*dir});
+$("b").innerHTML=r.map(s=>{const c=s.mom==null?"":s.mom>=0?"up":"dn";
 return `<tr><td>${s.rank??"–"}</td><td><b>${s.symbol}</b></td><td>${s.name||""}</td><td>${s.sector||""}</td>
 <td>${(s.marketCap/1e9).toFixed(0)}</td><td class="${c}">${f(s.mom)}</td>
-<td class="${c}">${s.mom==null?"–":((Math.exp(s.mom)-1)*100).toFixed(1)+"%"}</td><td>${spark(s.spark)}</td></tr>`}).join("")}
+<td class="${c}">${s.mom==null?"–":((Math.exp(s.mom)-1)*100).toFixed(1)+"%"}</td><td>${s.spark.length>1?spark(s.spark):""}</td></tr>`}).join("")}
 document.querySelectorAll("th[data-k]").forEach(th=>th.onclick=()=>{const k=th.dataset.k;
-dir=k===key?-dir:(k==="symbol"||k==="name"||k==="sector"||k==="rank"?1:-1);key=k;render()});
-document.getElementById("q").oninput=render;
-const BASE="https://financialmodelingprep.com/stable",TOP_N=100;
-const $=id=>document.getElementById(id),sub=t=>$("sub").textContent=t;
-try{$("key").value=localStorage.getItem("fmpkey")||"";$("gh").value=localStorage.getItem("ghtoken")||"";$("gcid").value=localStorage.getItem("gcid")||""}catch(e){}
-const REPO="vandyckmed-droid/ZippersUp",BRANCH="main",STORE="docs/data/raw.json";
-// ---- IndexedDB: key "raw" holds the raw FMP data (universe + daily adjusted closes)
+dir=k===key?-dir:(["symbol","name","sector","rank"].includes(k)?1:-1);key=k;render()});
+$("q").oninput=render;
+// ---- browser cache (IndexedDB) – a convenience mirror of the repo, safe to clear
 const db=new Promise((res,rej)=>{const r=indexedDB.open("zu",1);
 r.onupgradeneeded=()=>{r.result.createObjectStore("kv")};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
 const kv=async(m,k,v)=>{const d=await db;return new Promise((res,rej)=>{
 const st=d.transaction("kv",m).objectStore("kv"),q=m==="readonly"?st.get(k):st.put(v,k);
 q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)})};
+// ---- CSV helpers
+const q_=x=>/[",\n]/.test(x)?'"'+String(x).replace(/"/g,'""')+'"':x;
+const toCsv=(head,rs)=>head.join(",")+"\n"+rs.map(r=>r.map(x=>q_(x??"")).join(",")).join("\n")+"\n";
+function parseCsv(t){const out=[];let row=[],c="",inq=false;for(let i=0;i<t.length;i++){const ch=t[i];
+if(inq){if(ch=='"'){if(t[i+1]=='"'){c+='"';i++}else inq=false}else c+=ch}
+else if(ch=='"')inq=true;else if(ch==",")(row.push(c),c="");
+else if(ch=="\n"){row.push(c);out.push(row);row=[];c=""}else if(ch!="\r")c+=ch}
+if(c||row.length){row.push(c);out.push(row)}return out.slice(1)}
 // ---- FMP
 async function api(path,params){const u=new URL(BASE+"/"+path);
 Object.entries({...params,apikey:$("key").value.trim()}).forEach(([k,v])=>u.searchParams.set(k,v));
 for(let a=0;a<5;a++){const r=await fetch(u);if(r.status===429){await new Promise(z=>setTimeout(z,1000*2**a));continue}
 if(!r.ok)throw new Error(`FMP ${r.status} on ${path}`);const j=await r.json();
-if(j&&j["Error Message"])throw new Error(j["Error Message"]);return j}throw new Error("rate limited")}
+if(j&&j["Error Message"])throw new Error(j["Error Message"]);return j}throw new Error("FMP rate limited")}
 const px=async(sym,from,to)=>{const o={};(await api("historical-price-eod/dividend-adjusted",{symbol:sym,from,to}))
 .forEach(r=>{const p=r.adjClose||r.close;if(p>0)o[r.date]=p});return Object.entries(o).sort()};
 const iso=d=>d.toISOString().slice(0,10);
 function shiftMonths(d,m){const t=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()-m,1));
 const last=new Date(Date.UTC(t.getUTCFullYear(),t.getUTCMonth()+1,0)).getUTCDate();
 t.setUTCDate(Math.min(d.getUTCDate(),last));return t}
-async function cached(sym,start,end,cache){const old=cache[sym];
+// incremental: fetch only new days; refetch in full if the adjusted history was restated
+async function cached(sym,start,end,old){
 if(old&&old.length&&old[0][0]<=start){const last=new Date(old[old.length-1][0]+"T00:00Z");
 const nw=await px(sym,iso(new Date(last-10*864e5)),end),have=Object.fromEntries(old);
 if(!nw.some(([d,p])=>have[d]&&Math.abs(p/have[d]-1)>1e-3)){nw.forEach(([d,p])=>have[d]=p);return Object.entries(have).sort()}}
 return px(sym,start,end)}
+// ---- GitHub data repo
+const REPO=()=>$("repo").value.trim(),GH=p=>`https://api.github.com/repos/${REPO()}/${p}`;
+const ghh=()=>({Authorization:"Bearer "+$("gh").value.trim(),Accept:"application/vnd.github+json"});
+async function ghj(p,opt={}){const r=await fetch(GH(p),{...opt,headers:{...ghh(),...(opt.headers||{})}});
+if(r.status===404&&opt.allow404)return null;if(!r.ok)throw new Error(`GitHub ${r.status} on ${p}`+(r.status===404?" (check repo name/token)":""));return r.json()}
+async function getText(path){const j=await ghj(`contents/${path}?ref=${BRANCH}`,{allow404:true});if(!j)return null;
+if(j.content){const b=atob(j.content.replace(/\n/g,""));return new TextDecoder().decode(Uint8Array.from(b,c=>c.charCodeAt(0)))}
+const r=await fetch(j.download_url||GH(`contents/${path}?ref=${BRANCH}`),{headers:{...ghh(),Accept:"application/vnd.github.raw"}});return r.text()}
+async function commitFiles(files,msg){ // one commit for many files via the Git Data API
+const ref=await ghj(`git/ref/heads/${BRANCH}`),parent=ref.object.sha,base=(await ghj(`git/commits/${parent}`)).tree.sha,tree=[];
+const names=Object.keys(files);let n=0;
+await Promise.all(Array.from({length:6},async()=>{while(n<names.length){const p=names[n++];
+const b=await ghj("git/blobs",{method:"POST",body:JSON.stringify({content:files[p],encoding:"utf-8"})});
+tree.push({path:p,mode:"100644",type:"blob",sha:b.sha})}}));
+const t=await ghj("git/trees",{method:"POST",body:JSON.stringify({base_tree:base,tree})});
+const c=await ghj("git/commits",{method:"POST",body:JSON.stringify({message:msg,tree:t.sha,parents:[parent]})});
+await ghj(`git/refs/heads/${BRANCH}`,{method:"PATCH",body:JSON.stringify({sha:c.sha})})}
+const pool=async(n,items,fn)=>{let i=0;await Promise.all(Array.from({length:n},async()=>{while(i<items.length){const k=i++;await fn(items[k],k)}}))};
+const seriesCsv=s=>toCsv(["date","adjClose"],s);
+const parseSeries=t=>parseCsv(t).filter(r=>r[0]).map(r=>[r[0],+r[1]]);
+// ---- ranking
 const onOrBefore=(s,d)=>{let b=null;for(const x of s){if(x[0]<=d)b=x;else break}return b};
-function build(stocks,series,cutoff){const asOf=series.reduce((m,s)=>s.length&&s[s.length-1][0]>m?s[s.length-1][0]:m,"");
+function build(stocks,series){const asOf=series.reduce((m,s)=>s&&s.length&&s[s.length-1][0]>m?s[s.length-1][0]:m,"");
 const a=new Date(asOf+"T00:00Z"),t1=iso(shiftMonths(a,1)),t12=iso(shiftMonths(a,12));
 const slack=iso(new Date(new Date(t12+"T00:00Z").getTime()+5*864e5));const out=[];
-stocks.forEach((st,i)=>{const s=series[i];if(!s.length)return;const p12=onOrBefore(s,t12),p1=onOrBefore(s,t1);
-out.push({symbol:st.symbol,name:st.companyName,sector:st.sector,marketCap:st.marketCap,
+stocks.forEach((st,i)=>{const s=series[i]||[];if(!s.length)return;const p12=onOrBefore(s,t12),p1=onOrBefore(s,t1);
+out.push({symbol:st.symbol,name:st.companyName,sector:st.sector,marketCap:+st.marketCap,
 mom:p12&&p1&&s[0][0]<=slack?Math.log(p1[1]/p12[1]):null,spark:s.filter((_,k)=>k%5===0).map(x=>+x[1].toFixed(2))})});
 const r=out.filter(o=>o.mom!=null).sort((x,y)=>y.mom-x.mom);r.forEach((o,i)=>o.rank=i+1);
 return{asOf,from12:t12,to1:t1,stocks:r.concat(out.filter(o=>o.mom==null))}}
-function show(d){rows=d.stocks;sub(`As of ${d.asOf} · window ${d.from12} → ${d.to1} · ${rows.filter(s=>s.mom!=null).length} ranked · fetched ${d.fetched?.slice(0,16).replace("T"," ")||""}`);render()}
-$("go").onclick=async()=>{const b=$("go");if(!$("key").value.trim())return sub("Enter an FMP API key first.");
-try{localStorage.setItem("fmpkey",$("key").value.trim())}catch(e){}
-b.disabled=true;try{
+function showLocal(L,note=""){const d=build(L.universe,L.universe.map(u=>L.series[u.symbol]));rows=d.stocks;
+sub(`As of ${d.asOf} · window ${d.from12} → ${d.to1} · ${rows.filter(s=>s.mom!=null).length} ranked${note}`);render()}
+// ---- actions
+const guard=(btn,fn)=>async()=>{save();btn.disabled=true;try{await fn()}catch(e){sub("Error: "+e.message)}btn.disabled=false};
+async function loadRepo(){sub("Loading from data repo…");
+const u=await getText("fmp/universe.csv");if(!u)throw new Error("no data in repo yet – click Refresh from FMP");
+const universe=parseCsv(u).map(r=>({symbol:r[0],companyName:r[1],sector:r[2],marketCap:r[3],exchangeShortName:r[4]})),series={};let n=0;
+await pool(6,universe,async s=>{const t=await getText(`${EOD}/${s.symbol}.csv`);if(t)series[s.symbol]=parseSeries(t);sub(`Loading ${++n}/${universe.length}…`)});
+const L={universe,series};await kv("readwrite","data",L);showLocal(L," · loaded from repo")}
+$("load").onclick=guard($("load"),loadRepo);
+$("go").onclick=guard($("go"),async()=>{
+if(!$("key").value.trim())throw new Error("enter an FMP API key");
+const haveRepo=$("gh").value.trim()&&REPO();
 sub("Fetching top 100 by market cap…");
-let list=await api("company-screener",{marketCapMoreThan:2e10,country:"US",isEtf:"false",isFund:"false",isActivelyTrading:"true",exchange:"NYSE,NASDAQ",limit:400});
+const list=await api("company-screener",{marketCapMoreThan:2e10,country:"US",isEtf:"false",isFund:"false",isActivelyTrading:"true",exchange:"NYSE,NASDAQ",limit:400});
 const seen=new Set(),stocks=list.filter(r=>r.marketCap&&/^[A-Z]{1,5}$/.test(r.symbol)&&!/series|pfd|preferred|trust|notes|depositary/i.test(r.companyName||"")
 &&["NYSE","NASDAQ"].includes(r.exchangeShortName)).sort((x,y)=>y.marketCap-x.marketCap)
-.filter(r=>!seen.has(r.companyName)&&seen.add(r.companyName)).slice(0,TOP_N); // drop preferreds/odd tickers; one line per company
-const end=new Date(),endS=iso(end),start=iso(shiftMonths(end,48)),cache=((await kv("readonly","raw"))||{}).prices||{};
-const series=new Array(stocks.length);let done=0,next=0;
-await Promise.all(Array.from({length:6},async()=>{while(next<stocks.length){const i=next++;
-series[i]=await cached(stocks[i].symbol,start,endS,cache);sub(`Fetching prices ${++done}/${stocks.length}…`)}}));
-const nc={};stocks.forEach((s,i)=>nc[s.symbol]=series[i].filter(x=>x[0]>=start));
-const raw={version:2,fetched:new Date().toISOString(),universe:stocks.map(({symbol,companyName,sector,marketCap,exchangeShortName})=>({symbol,companyName,sector,marketCap,exchangeShortName})),prices:nc};
-await kv("readwrite","raw",raw);showRaw(raw)}catch(e){sub("Error: "+e.message)}b.disabled=false};
-$("clr").onclick=async()=>{await kv("readwrite","raw",null);rows=[];render();sub("Cache cleared.")};
-// ---- save/load the cache + ranking as a JSON file in the repo (served by Pages at data/raw.json)
-async function loadRepo(){const r=await fetch("data/raw.json?t="+Date.now());if(!r.ok)throw new Error("no saved data in repo yet");
-await applyStore(await r.json())}
-$("load").onclick=()=>loadRepo().catch(e=>sub("Load failed: "+e.message));
-$("save").onclick=async()=>{const tok=$("gh").value.trim();if(!tok)return sub("Enter a GitHub token first.");
-try{localStorage.setItem("ghtoken",tok)}catch(e){}
-try{const raw=await getStore();
-const bytes=new TextEncoder().encode(JSON.stringify(raw));let bin="";
-for(let i=0;i<bytes.length;i+=8192)bin+=String.fromCharCode(...bytes.subarray(i,i+8192));
-const url=`https://api.github.com/repos/${REPO}/contents/${STORE}`,h={Authorization:"Bearer "+tok,Accept:"application/vnd.github+json"};
-const cur=await fetch(url+"?ref="+BRANCH,{headers:h});let sha;
-if(cur.ok)sha=(await cur.json()).sha;else if(cur.status!==404)throw new Error("GitHub "+cur.status);
-sub("Saving to repo…");
-const put=await fetch(url,{method:"PUT",headers:h,body:JSON.stringify({message:"Update raw FMP data "+raw.fetched.slice(0,10),content:btoa(bin),branch:BRANCH,sha})});
-if(!put.ok)throw new Error("GitHub "+put.status+" "+((await put.json()).message||""));
-sub("Saved to repo (site redeploys in ~1 min).")}catch(e){sub("Save failed: "+e.message)}};
-// ---- local export / import
-// Raw store = {version:2, fetched, universe[], prices{sym:[[date,adjClose]]}}. Rankings are always computed in the browser from it.
-const rankOf=raw=>{const d=build(raw.universe,raw.universe.map(u=>raw.prices[u.symbol]||[]));d.fetched=raw.fetched;return d};
-const showRaw=raw=>show(rankOf(raw));
-const getStore=async()=>{const raw=await kv("readonly","raw");if(!raw)throw new Error("no raw data – click Refresh data first");return raw};
-const applyStore=async j=>{if(j.version!==2||!j.prices||!j.universe)throw new Error("not a ZippersUp raw-data file");await kv("readwrite","raw",j);showRaw(j)};
-const csv=r=>"rank,symbol,name,sector,marketCap,log_ret_12_1,pct\n"+r.stocks.map(s=>[s.rank??"",s.symbol,'"'+(s.name||"").replace(/"/g,'""')+'"',
-'"'+(s.sector||"")+'"',s.marketCap,s.mom??"",s.mom==null?"":((Math.exp(s.mom)-1)*100).toFixed(2)].join(",")).join("\n");
-function download(name,text,type){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click();URL.revokeObjectURL(a.href)}
-const guard=f=>async()=>{try{await f()}catch(e){sub("Error: "+e.message)}};
-$("dlj").onclick=guard(async()=>{const j=await getStore();download(`zippersup-raw-${j.fetched.slice(0,10)}.json`,JSON.stringify(j),"application/json");sub("Downloaded JSON.")});
-$("dlc").onclick=guard(async()=>{const j=await getStore();download(`zippersup-ranking-${j.fetched.slice(0,10)}.csv`,csv(rankOf(j)),"text/csv");sub("Downloaded CSV.")});
-$("cp").onclick=guard(async()=>{await navigator.clipboard.writeText(csv(rankOf(await getStore())));sub("Copied CSV to clipboard.")});
-$("ul").onclick=()=>$("file").click();
-$("file").onchange=guard(async()=>{const f=$("file").files[0];if(!f)return;const j=JSON.parse(await f.text());
-await applyStore(j);$("file").value=""});
-// ---- Google Drive (drive.file scope: the app only sees files it created)
-const DRIVE_FILE="zippersup-raw.json";let gtok=null,gexp=0;
-function gToken(){const cid=$("gcid").value.trim();if(!cid)throw new Error("enter a Google OAuth client ID");
-try{localStorage.setItem("gcid",cid)}catch(e){}
-if(gtok&&Date.now()<gexp)return Promise.resolve(gtok);
-return new Promise((res,rej)=>{const go=()=>google.accounts.oauth2.initTokenClient({client_id:cid,scope:"https://www.googleapis.com/auth/drive.file",
-callback:r=>r.error?rej(new Error(r.error)):(gtok=r.access_token,gexp=Date.now()+(r.expires_in-60)*1e3,res(gtok))}).requestAccessToken();
-if(window.google&&google.accounts)return go();const sc=document.createElement("script");sc.src="https://accounts.google.com/gsi/client";sc.onload=go;
-sc.onerror=()=>rej(new Error("could not load Google sign-in"));document.head.appendChild(sc)})}
-async function driveFind(t){const r=await fetch("https://www.googleapis.com/drive/v3/files?q="+encodeURIComponent(`name='${DRIVE_FILE}' and trashed=false`)+"&fields=files(id)",{headers:{Authorization:"Bearer "+t}});
-if(!r.ok)throw new Error("Drive "+r.status);return(await r.json()).files[0]?.id}
-$("gsave").onclick=guard(async()=>{const j=await getStore(),t=await gToken();sub("Saving to Drive…");const id=await driveFind(t),h={Authorization:"Bearer "+t};let r;
-if(id)r=await fetch(`https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=media`,{method:"PATCH",headers:{...h,"Content-Type":"application/json"},body:JSON.stringify(j)});
-else{const b="zu"+Date.now(),body=`--${b}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify({name:DRIVE_FILE})}\r\n--${b}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(j)}\r\n--${b}--`;
-r=await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",{method:"POST",headers:{...h,"Content-Type":"multipart/related; boundary="+b},body})}
-if(!r.ok)throw new Error("Drive "+r.status);sub("Saved to Google Drive as "+DRIVE_FILE+".")});
-$("gload").onclick=guard(async()=>{const t=await gToken(),id=await driveFind(t);if(!id)throw new Error("no "+DRIVE_FILE+" in Drive yet");
-const r=await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`,{headers:{Authorization:"Bearer "+t}});if(!r.ok)throw new Error("Drive "+r.status);await applyStore(await r.json())});
-kv("readonly","raw").then(d=>d?showRaw(d):loadRepo()).catch(()=>{});
+.filter(r=>!seen.has(r.companyName)&&seen.add(r.companyName)).slice(0,TOP_N);
+const L=(await kv("readonly","data"))||{universe:[],series:{}};
+if(haveRepo){let n=0;const need=stocks.filter(s=>!L.series[s.symbol]); // rebuild a cleared browser cache from the repo
+await pool(6,need,async s=>{const t=await getText(`${EOD}/${s.symbol}.csv`);if(t)L.series[s.symbol]=parseSeries(t);sub(`Reading existing data ${++n}/${need.length}…`)})}
+const end=new Date(),endS=iso(end),start=iso(shiftMonths(end,48)),changed={};let done=0;
+await pool(6,stocks,async s=>{const old=L.series[s.symbol],nw=await cached(s.symbol,start,endS,old);
+if(JSON.stringify(old)!==JSON.stringify(nw)){L.series[s.symbol]=nw;changed[s.symbol]=nw}sub(`Fetching prices ${++done}/${stocks.length}…`)});
+L.universe=stocks.map(({symbol,companyName,sector,marketCap,exchangeShortName})=>({symbol,companyName,sector,marketCap,exchangeShortName}));
+await kv("readwrite","data",L);showLocal(L);
+if(!haveRepo)return sub(rows.length+" ranked · NOT saved (add GitHub token + repo to store the data)");
+const files={},nch=Object.keys(changed).length;
+for(const[sym,s]of Object.entries(changed))files[`${EOD}/${sym}.csv`]=seriesCsv(s);
+const fetched=new Date().toISOString();
+files["fmp/universe.csv"]=toCsv(["symbol","companyName","sector","marketCap","exchange","fetched"],L.universe.map(u=>[u.symbol,u.companyName,u.sector,u.marketCap,u.exchangeShortName,fetched]));
+const man={version:1,updated:fetched,datasets:{[EOD]:{source:"FMP stable historical-price-eod/dividend-adjusted",columns:["date","adjClose"],symbols:{}}},universe:"fmp/universe.csv"};
+for(const[sym,s]of Object.entries(L.series))if(s.length)man.datasets[EOD].symbols[sym]={first:s[0][0],last:s[s.length-1][0],rows:s.length};
+files["manifest.json"]=JSON.stringify(man,null,1)+"\n";
+sub(`Saving ${nch} updated series to ${REPO()}…`);
+await commitFiles(files,`FMP refresh ${fetched.slice(0,10)}: ${nch} series updated`);
+showLocal(L,` · saved to repo (${nch} series changed)`)});
+$("clr").onclick=async()=>{await kv("readwrite","data",null);rows=[];render();sub("Browser cache cleared. Your repo data is untouched – click Load from repo.")};
+kv("readonly","data").then(L=>L?showLocal(L," · from browser cache"):($("gh").value&&loadRepo())).catch(()=>{});
 </script></main></body></html>
